@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Builds a static site from folders like 0001-two-sum/{README.md,solution*.ext}."""
+import datetime as dt
 import html
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import markdown
 from pygments import highlight
@@ -14,6 +17,7 @@ from pygments.lexers import get_lexer_by_name
 # ---- settings you may want to change ---------------------------------------
 SITE_TITLE = "LeetCode Journal"
 SITE_TAGLINE = "Problems I've solved, how I thought about them, and what they cost."
+TIMEZONE = "Asia/Kolkata"  # decides which calendar day a solve counts for
 # -----------------------------------------------------------------------------
 
 ROOT = Path(__file__).resolve().parent
@@ -116,6 +120,122 @@ def parse_problem(folder: Path):
     }
 
 
+
+# --------------------------------------------------------------- activity ----
+SOLUTION_RE = re.compile(r"^\d{4,}-[^/]+/solution(?:_\d+)?\.\w+$")
+
+PALETTES = {
+    "light": dict(empty="#ebedf0", levels=["#9be9a8", "#40c463", "#30a14e", "#216e39"],
+                  text="#57606a", strong="#1f2328", ring="#1f2328"),
+    "dark": dict(empty="#212b3d", levels=["#0e4429", "#006d32", "#26a641", "#39d353"],
+                 text="#8b949e", strong="#e6edf3", ring="#e6edf3"),
+}
+
+
+def solution_counts():
+    """{date: number of solution files added that day}, from git history."""
+    tz = ZoneInfo(TIMEZONE)
+    try:
+        out = subprocess.run(
+            ["git", "log", "--diff-filter=A", "--name-only", "--format=@@%aI"],
+            cwd=ROOT, capture_output=True, text=True, check=True,
+        ).stdout
+    except Exception:
+        return {}
+    counts, day = {}, None
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("@@"):
+            day = dt.datetime.fromisoformat(line[2:]).astimezone(tz).date()
+        elif line and day and SOLUTION_RE.match(line):
+            counts[day] = counts.get(day, 0) + 1
+    return counts
+
+
+def streaks(counts, today):
+    one = dt.timedelta(days=1)
+    d = today if counts.get(today) else today - one  # today not over yet
+    current = 0
+    while counts.get(d):
+        current += 1
+        d -= one
+    longest = run = 0
+    prev = None
+    for d in sorted(counts):
+        run = run + 1 if prev and (d - prev).days == 1 else 1
+        longest = max(longest, run)
+        prev = d
+    return current, longest
+
+
+def heatmap_svg(counts, today, theme, standalone=True):
+    P = PALETTES[theme]
+    CELL, STEP, LEFT, TOP, WEEKS = 11, 14, 34, 68, 53
+    W = LEFT + WEEKS * STEP + 14
+    H = TOP + 7 * STEP + 40
+    start = today - dt.timedelta(days=(today.weekday() + 1) % 7) - dt.timedelta(weeks=WEEKS - 1)
+    first = start
+
+    total = sum(n for d, n in counts.items() if first <= d <= today)
+    cur, longest = streaks(counts, today)
+    solved_today = bool(counts.get(today))
+    font = "font-family=\"-apple-system,Segoe UI,Helvetica,Arial,sans-serif\""
+
+    o = []
+    if standalone:
+        o.append('<?xml version="1.0" encoding="UTF-8"?>')
+    o.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" '
+             f'aria-label="LeetCode solving activity">')
+    plural = "" if total == 1 else "s"
+    o.append(f'<text x="{LEFT}" y="20" {font} font-size="15" font-weight="600" fill="{P["strong"]}">'
+             f'{total} solution{plural} in the last year</text>')
+    sd = "day" if cur == 1 else "days"
+    ld = "day" if longest == 1 else "days"
+    o.append(f'<text x="{LEFT}" y="39" {font} font-size="12" fill="{P["text"]}">'
+             f'Current streak: {cur} {sd}  ·  Longest streak: {longest} {ld}</text>')
+    dot = P["levels"][2] if solved_today else P["empty"]
+    label = "Solved today" if solved_today else "Not solved yet today"
+    o.append(f'<circle cx="{W - 150}" cy="15" r="5" fill="{dot}" stroke="{P["text"]}" stroke-width="0.6"/>')
+    o.append(f'<text x="{W - 140}" y="19" {font} font-size="12" fill="{P["text"]}">{label}</text>')
+
+    # month labels
+    last_m, last_x = None, -99
+    for w in range(WEEKS):
+        d = start + dt.timedelta(weeks=w)
+        if d.month != last_m:
+            x = LEFT + w * STEP
+            if x - last_x >= 36:
+                o.append(f'<text x="{x}" y="{TOP - 8}" {font} font-size="10" fill="{P["text"]}">{d.strftime("%b")}</text>')
+                last_x = x
+            last_m = d.month
+    # weekday labels
+    for r, name in ((1, "Mon"), (3, "Wed"), (5, "Fri")):
+        o.append(f'<text x="0" y="{TOP + r * STEP + 9}" {font} font-size="10" fill="{P["text"]}">{name}</text>')
+
+    # cells
+    for w in range(WEEKS):
+        for r in range(7):
+            d = start + dt.timedelta(weeks=w, days=r)
+            if d > today:
+                continue
+            n = counts.get(d, 0)
+            fill = P["empty"] if n == 0 else P["levels"][min(n, 4) - 1]
+            ring = f' stroke="{P["ring"]}" stroke-width="1.5"' if d == today else ""
+            tip = f'{n} solution{"" if n == 1 else "s"} on {d.strftime("%b %d, %Y")}'
+            o.append(f'<rect x="{LEFT + w * STEP}" y="{TOP + r * STEP}" width="{CELL}" height="{CELL}" rx="2" '
+                     f'fill="{fill}"{ring}><title>{tip}</title></rect>')
+
+    # legend
+    ly = TOP + 7 * STEP + 18
+    lx = W - 14 - 190
+    o.append(f'<text x="{lx}" y="{ly + 9}" {font} font-size="10" fill="{P["text"]}">Less</text>')
+    for i, c in enumerate([P["empty"]] + P["levels"]):
+        o.append(f'<rect x="{lx + 30 + i * STEP}" y="{ly}" width="{CELL}" height="{CELL}" rx="2" fill="{c}"/>')
+    o.append(f'<text x="{lx + 30 + 5 * STEP + 4}" y="{ly + 9}" {font} font-size="10" fill="{P["text"]}">More</text>')
+    o.append("</svg>")
+    return "".join(o)
+
+
 # ------------------------------------------------------------- templating ----
 def head(title, rel):
     return (
@@ -149,7 +269,7 @@ def badge(diff):
     return f'<span class="badge {diff.lower()}">{esc(diff)}</span>'
 
 
-def render_index(problems):
+def render_index(problems, activity_html=""):
     total = len(problems)
     counts = {d: sum(1 for p in problems if p["difficulty"] == d) for d in ("Easy", "Medium", "Hard")}
 
@@ -188,6 +308,7 @@ def render_index(problems):
         f'<div class="stat medium"><b>{counts["Medium"]}</b><span>Medium</span></div>'
         f'<div class="stat hard"><b>{counts["Hard"]}</b><span>Hard</span></div>'
         "</div></section>"
+        + activity_html +
         '<section class="controls">'
         '<input id="q" type="search" placeholder="Search by name or number…" autocomplete="off">'
         '<div class="filters" id="filters">'
@@ -340,6 +461,10 @@ border-bottom:0;border-radius:12px 12px 0 0;font:.8rem var(--mono);color:var(--m
 .pager{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:10px 0 40px}
 .pn{display:block;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);color:var(--text)}
 .pn small{display:block;color:var(--muted)}.pn.right{text-align:right}.pn:hover{border-color:var(--accent);text-decoration:none}
+.activity{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 22px;margin-top:24px;box-shadow:var(--shadow)}
+.activity h2{margin:0 0 6px;font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.hm-scroll{overflow-x:auto}.hm svg{display:block;width:100%;min-width:720px;height:auto}
+[data-theme="dark"] .hm.light,[data-theme="light"] .hm.dark{display:none}
 .foot{padding:30px 20px 50px;text-align:center;color:var(--muted);font-size:.85rem}
 @media(max-width:640px){.stats{grid-template-columns:repeat(2,1fr)}.block{padding:18px}.pager{grid-template-columns:1fr}}
 """
@@ -409,7 +534,17 @@ def main():
     (OUT / "style.css").write_text(build_css(), encoding="utf-8")
     (OUT / "app.js").write_text(APP_JS, encoding="utf-8")
     (OUT / ".nojekyll").write_text("")
-    (OUT / "index.html").write_text(render_index(problems), encoding="utf-8")
+    counts = solution_counts()
+    today = dt.datetime.now(ZoneInfo(TIMEZONE)).date()
+    for theme in ("light", "dark"):
+        (OUT / f"activity-{theme}.svg").write_text(heatmap_svg(counts, today, theme), encoding="utf-8")
+    activity_html = (
+        '<section class="activity"><h2>Activity</h2><div class="hm-scroll">'
+        f'<div class="hm light">{heatmap_svg(counts, today, "light", standalone=False)}</div>'
+        f'<div class="hm dark">{heatmap_svg(counts, today, "dark", standalone=False)}</div>'
+        "</div></section>"
+    )
+    (OUT / "index.html").write_text(render_index(problems, activity_html), encoding="utf-8")
 
     for i, p in enumerate(problems):
         prev_p = problems[i - 1] if i > 0 else None
