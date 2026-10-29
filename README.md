@@ -1,1 +1,66 @@
-# leetcode-ani
+# LeetCode Journal
+
+My LeetCode solutions, with notes on how I approached each problem and what it costs in time and space.
+
+**Live site:** https://aniketsinha05.github.io/leetcode-ani/
+
+## How it works
+
+Each problem lives in its own folder:
+
+```
+leetcode-ani/
+├── 0001-two-sum/
+│   ├── solution.py        # first accepted approach
+│   ├── solution_2.py      # a different approach
+│   ├── solution.cpp       # same problem, another language
+│   └── README.md          # problem, approach, complexity, notes
+├── 0015-3sum/
+│   └── ...
+├── build.py               # generates the website from the folders
+└── .github/workflows/deploy.yml
+```
+
+1. A personal Chrome extension pushes each accepted LeetCode submission to this repo using a fine-grained token scoped to this repo only.
+2. Identical code is skipped, and a different approach is saved as `solution_2.py`, `solution_3.py`, and so on.
+3. I fill in each problem's `README.md` (approach, time and space complexity, notes).
+4. On every push to `main`, GitHub Actions runs `build.py` and publishes the site with GitHub Pages.
+
+## README format per problem
+
+`build.py` reads these parts of each problem's README, so keep the structure:
+
+```markdown
+# 1. Two Sum
+
+**Difficulty:** Easy
+**Link:** https://leetcode.com/problems/two-sum/
+
+## Problem
+## Approach
+## Complexity
+- **Time:** O(n)
+- **Space:** O(n)
+## Notes
+```
+
+Time and space show up as badges on the site once the `O( )` placeholders are replaced.
+
+## Run the site locally
+
+```bash
+pip install markdown pygments
+python build.py
+```
+
+Then open `site/index.html` in a browser.
+
+## One-time setup (already done)
+
+- Settings → Pages → Source: **GitHub Actions**
+- Token permissions (for the extension): this repository only, **Contents: Read and write**
+
+## Notes
+
+- Folder names are zero-padded (`0001-...`) so they sort in order.
+- Never commit the token. It lives only in the extension's local storage.

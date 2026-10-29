@@ -1,0 +1,19 @@
+# Generated site (rebuilt by GitHub Actions on every push)
+site/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets - never commit tokens
+.env
+*.token
